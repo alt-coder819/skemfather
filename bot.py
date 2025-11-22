@@ -40,46 +40,61 @@ def load_config(path: str) -> dict:
 def load_csv(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
         raise FileNotFoundError(f"CSV not found: {path}")
+
     df = pd.read_csv(path, dtype=str, header=None, keep_default_na=False)
-    df[0] = df[0].astype(str)
     return df
 
 
 # --------------------------------------
-# PHONE NUMBER & SEARCH LOGIC
+# PHONE SEARCH LOGIC
 # --------------------------------------
 
 def normalize_number(s: str) -> str:
     return re.sub(r"\D", "", s or "")
 
 
-def find_row_by_number(df: pd.DataFrame, phone: str) -> Optional[str]:
+def find_row_by_number(df: pd.DataFrame, phone: str) -> Optional[pd.Series]:
+    """
+    Zoekt in ALLE kolommen, niet alleen kolom 0,
+    zodat we ALLE data van die regel vinden.
+    """
     phone_norm = normalize_number(phone)
-    if not phone_norm:
+    if phone_norm == "":
         return None
 
-    # Zoek in de volledige regel
-    mask = df[0].str.replace(r"\D", "", regex=True).str.contains(phone_norm)
-    rows = df[mask]
+    mask = df.apply(
+        lambda col: col.astype(str)
+        .str.replace(r"\D", "", regex=True)
+        .str.contains(phone_norm, na=False)
+    )
 
+    rows = df[mask.any(axis=1)]
     if rows.empty:
         return None
 
-    return rows.iloc[0, 0]  # volledige regel string
+    return rows.iloc[0]
 
 
-def pretty_format_row(line: str) -> str:
+# --------------------------------------
+# FORMAT RESULT
+# --------------------------------------
+
+def pretty_format_row(row: pd.Series) -> str:
     """
-    Extract ALLE key:"value" velden — precies zoals je CSV werkt.
+    Combineer alle kolommen → haal ALLE key:"value" velden eruit.
     """
-    pairs = re.findall(r'([A-Za-z0-9_]+):"([^"]*)"', line)
+    text = " ".join([str(x) for x in row if str(x).strip()])
+
+    # Zoek alle key:"value" velden
+    pairs = re.findall(r'([A-Za-z0-9_]+):"([^"]*)"', text)
 
     if not pairs:
-        return "(geen details gevonden)"
+        return text
 
     out = []
     for key, val in pairs:
-        out.append(f"{key}: {val}")
+        if val.strip():
+            out.append(f"{key}: {val}")
 
     return "\n".join(out)
 
@@ -102,33 +117,31 @@ dp = Dispatcher(bot)
 
 @dp.message_handler(commands=["start"])
 async def start(message: types.Message):
-    await message.reply("Stuur een telefoonnummer en ik zoek de gegevens erbij.")
+    await message.reply("Stuur een telefoonnummer en ik haal de gegevens op.")
 
 
 @dp.message_handler()
 async def handle_message(message: types.Message):
 
-    # Als groepen verboden zijn (kan via config)
     if message.chat.type != "private" and not allow_groups:
         return
 
     text = message.text.strip()
 
-    # Telefonummer zoeken
+    # Zoek telefoonnummer
     num = re.search(r"[+]?\d[\d \-()+]{4,}", text)
     if not num:
         return
 
     phone_raw = num.group(0)
 
-    # CSV zoeken
-    line = find_row_by_number(df, phone_raw)
-    if line is None:
+    # Zoek in CSV
+    row = find_row_by_number(df, phone_raw)
+    if row is None:
         await message.reply(f"Geen gegevens gevonden voor: {phone_raw}")
         return
 
-    # Netjes formatteren
-    formatted = pretty_format_row(line)
+    formatted = pretty_format_row(row)
     await message.reply(formatted)
 
 
