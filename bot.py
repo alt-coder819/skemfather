@@ -96,7 +96,7 @@ async def handle_message(message: types.Message):
         return
 
     text = message.text.strip()
-    num = re.search(r"[+]?\\d[\\d \\-()+]{4,}", text)
+    num = re.search(r"[+]?\d[\d \-()+]{4,}", text)
     if not num:
         return
 
